@@ -60,16 +60,27 @@ def cargar_csv(archivo, etiqueta):
 
 
 def encontrar_columna(df, palabras_clave, excluir=None):
-    """Busca la primera columna cuyo nombre normalizado contenga alguna de las
-    palabras clave dadas (también normalizadas)."""
+    """Busca la columna cuyo nombre normalizado matchea mejor alguna de las
+    palabras clave. Prioriza coincidencias más específicas (más largas) antes
+    que las genéricas, para no confundir por ejemplo 'Imp. Total' con
+    'Imp. Neto Gravado Total'."""
     excluir = excluir or []
+    palabras_ordenadas = sorted(palabras_clave, key=len, reverse=True)
+
+    candidatos = []
     for col in df.columns:
         col_norm = _normalizar(col)
         if any(_normalizar(p) in col_norm for p in excluir):
             continue
-        if any(_normalizar(p) in col_norm for p in palabras_clave):
-            return col
-    return None
+        for i, palabra in enumerate(palabras_ordenadas):
+            if _normalizar(palabra) in col_norm:
+                candidatos.append((i, len(col_norm), col))
+                break
+
+    if not candidatos:
+        return None
+    candidatos.sort(key=lambda x: (x[0], x[1]))
+    return candidatos[0][2]
 
 
 def elegir_columna(df, etiqueta, key, palabras_clave, excluir=None, tipo="numero"):
@@ -131,17 +142,26 @@ if archivo_ventas and archivo_compras:
         st.subheader("Columnas detectadas")
         st.caption("Se detectan automáticamente. Corregilas acá si hiciera falta.")
 
+        # Palabras clave para el monto total: probamos primero las variantes más
+        # específicas que usa AFIP ("Importe Total", "Imp. Total") y excluimos
+        # columnas de sub-totales (neto gravado, IVA, exento, etc.) para no
+        # confundirlas con el total real del comprobante.
+        claves_monto = ["importe total", "imp. total", "imp total"]
+        excluir_monto = ["neto", "gravado", "iva", "exent", "no gravado", "tributo"]
+
+        claves_denom = ["denominacion receptor", "denominacion comprador", "denominacion vendedor", "denominacion", "receptor", "cliente", "proveedor"]
+
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Ventas**")
             col_fecha_v = elegir_columna(df_ventas, "fecha", "fecha_v", ["fecha"])
-            col_monto_v = elegir_columna(df_ventas, "importe/monto", "monto_v", ["importe total", "importe", "total"])
-            col_denom_v = elegir_columna(df_ventas, "denominación", "denom_v", ["denominacion comprador", "denominacion", "cliente"])
+            col_monto_v = elegir_columna(df_ventas, "importe/monto", "monto_v", claves_monto, excluir=excluir_monto)
+            col_denom_v = elegir_columna(df_ventas, "denominación", "denom_v", claves_denom)
         with c2:
             st.markdown("**Compras**")
             col_fecha_c = elegir_columna(df_compras, "fecha", "fecha_c", ["fecha"])
-            col_monto_c = elegir_columna(df_compras, "importe/monto", "monto_c", ["importe total", "importe", "total"])
-            col_denom_c = elegir_columna(df_compras, "denominación", "denom_c", ["denominacion vendedor", "denominacion", "proveedor"])
+            col_monto_c = elegir_columna(df_compras, "importe/monto", "monto_c", claves_monto, excluir=excluir_monto)
+            col_denom_c = elegir_columna(df_compras, "denominación", "denom_c", claves_denom)
 
         if col_monto_v and col_monto_c:
             df_ventas["_monto"] = a_numero(df_ventas[col_monto_v])
